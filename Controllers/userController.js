@@ -1,11 +1,11 @@
 const bcrypt = require("bcrypt");
 const _ = require("lodash");
-const axios = require("axios");
 const otpGenerator = require("otp-generator");
 
 // Import model yang diperlukan
 const { User } = require("../Model/userModel");
 const { Otp } = require("../Model/otpModel");
+const NameUser = require("../Model/nameUserModel");
 
 // Import variabel lingkungan
 require("dotenv").config();
@@ -70,27 +70,85 @@ module.exports.signUp = async (req, res) => {
 
 // Fungsi untuk memverifikasi OTP
 module.exports.verifyOtp = async (req, res) => {
-  const otpHolder = await Otp.find({
-    number: req.body.number,
-  });
-  if (otpHolder.length === 0)
-    return res.status(400).send("You use an Expired OTP!");
-  const rightOtpFind = otpHolder[otpHolder.length - 1];
-  const validUser = await bcrypt.compare(req.body.otp, rightOtpFind.otp);
+  try {
+    const { number, otp } = req.body;
 
-  if (rightOtpFind.number === req.body.number && validUser) {
-    const user = new User(_.pick(req.body, ["number"]));
-    const token = user.generateJWT();
-    const result = await user.save();
-    const OTPDelete = await Otp.deleteMany({
-      number: rightOtpFind.number,
-    });
-    return res.status(200).send({
-      message: "User Registration Successfull!",
-      token: token,
-      data: result,
-    });
-  } else {
-    return res.status(400).send("Your OTP was wrong!");
+    // Cari OTP terkait dari database
+    const otpHolder = await Otp.find({ number });
+
+    // Periksa apakah OTP ditemukan
+    if (!otpHolder.length)
+      return res.status(400).send("You used an expired OTP!");
+
+    // Ambil OTP terbaru
+    const rightOtpFind = otpHolder[otpHolder.length - 1];
+
+    // Verifikasi OTP
+    const validUser = await bcrypt.compare(otp, rightOtpFind.otp);
+
+    if (rightOtpFind.number === number && validUser) {
+      // Generate token JWT
+      const user = new User(_.pick(req.body, ["number"]));
+      const token = user.generateJWT();
+      return res.status(200).send({
+        message: "User Registration Successfull!",
+        token: token,
+      });
+    } else {
+      return res.status(400).send("Your OTP was wrong!");
+    }
+  } catch (error) {
+    console.error("Error in verifyOtp:", error);
+    return res.status(500).send("Internal Server Error");
+  }
+};
+
+module.exports.addName = async (req, res) => {
+  try {
+    // Dapatkan nomor, OTP, dan nama dari permintaan
+    const { number, otp, name } = req.body;
+
+    // Cek apakah OTP sesuai dengan yang tersimpan
+    const otpHolder = await Otp.find({ number });
+    if (!otpHolder.length)
+      return res.status(400).send("You used an expired OTP!");
+
+    const rightOtpFind = otpHolder[otpHolder.length - 1];
+    const validUser = await bcrypt.compare(otp, rightOtpFind.otp);
+
+    if (rightOtpFind.number === number && validUser) {
+      // Buat instance baru dari model NameUser dan simpan ke database
+      const newUser = new NameUser({ number, otp, name });
+      await newUser.save();
+
+      // Setelah berhasil menambahkan nama, buat token JWT
+      const token = newUser.generateJWT();
+
+      // Kirim token JWT sebagai respons
+      return res.status(200).json({ token });
+    } else {
+      return res.status(400).send("Your OTP was wrong!");
+    }
+  } catch (error) {
+    console.error("Error in addName:", error);
+    return res.status(500).send("Internal Server Error");
+  }
+};
+
+module.exports.getName = async (req, res) => {
+  try {
+    // Mengambil semua dokumen dari koleksi NameUser
+    const users = await NameUser.find({}, { _id: 1, name: 1 }); // Mengambil field '_id' dan 'name'
+
+    // Jika tidak ada pengguna ditemukan
+    if (!users) {
+      return res.status(404).json({ message: "No users found." });
+    }
+
+    // Mengirimkan data pengguna sebagai respons
+    return res.status(200).json(users);
+  } catch (error) {
+    console.error("Error in getName:", error);
+    return res.status(500).send("Internal Server Error");
   }
 };
